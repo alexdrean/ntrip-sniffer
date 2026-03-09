@@ -115,14 +115,6 @@ WantedBy=multi-user.target
 sudo systemctl enable --now ntrip-bridge
 ```
 
-## Building from Source
-
-Requires Go 1.21+:
-
-```bash
-go build -o ntrip_bridge .
-```
-
 ## Notes
 
 - Multiple rovers can connect simultaneously.
