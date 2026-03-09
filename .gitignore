@@ -1,1 +1,8 @@
 __pycache__/
+_build/
+ebin/
+*.beam
+erl_crash.dump
+rebar3.crashdump
+.rebar3/
+/ntrip_bridge
