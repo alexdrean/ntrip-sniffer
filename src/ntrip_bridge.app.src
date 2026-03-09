@@ -5,5 +5,5 @@
     {mod, {ntrip_app, []}},
     {applications, [kernel, stdlib]},
     {modules, [ntrip_bridge, ntrip_app, ntrip_sup, ntrip_rtcm3, ntrip_protocol,
-               ntrip_clients, ntrip_tzsp, ntrip_caster]}
+               ntrip_clients, ntrip_tzsp, ntrip_caster, ntrip_auth]}
 ]}.

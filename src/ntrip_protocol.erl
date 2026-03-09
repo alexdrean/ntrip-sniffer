@@ -21,23 +21,34 @@ walk_tags(<<>>) ->
 walk_tags(_) ->
     error.
 
-%% Given an Ethernet or raw-IP frame, extract the transport payload.
-extract_ip_payload(<<4:4, IHL:4, _:64, Proto, _Checksum:16, _Src:32, _Dst:32, Rest/binary>>) ->
+%% Given an Ethernet or raw-IP frame, extract the source IP and transport payload.
+%% Returns {ok, SrcIP, Payload} where SrcIP is a binary like <<"192.168.1.1">>.
+extract_ip_payload(<<4:4, IHL:4, _:64, Proto, _Checksum:16,
+                     SA, SB, SC, SD, _Dst:32, Rest/binary>>) ->
     %% Raw IPv4
+    SrcIP = list_to_binary(inet:ntoa({SA, SB, SC, SD})),
     OptionsLen = (IHL - 5) * 4,
     case Rest of
         <<_Options:OptionsLen/binary, TransportData/binary>> ->
-            extract_transport(Proto, TransportData);
+            case extract_transport(Proto, TransportData) of
+                {ok, Payload} -> {ok, SrcIP, Payload};
+                error -> error
+            end;
         _ ->
             error
     end;
 extract_ip_payload(<<_EthDst:6/binary, _EthSrc:6/binary, _EthType:16,
-                     4:4, IHL:4, _:64, Proto, _Checksum:16, _Src:32, _Dst:32, Rest/binary>>) ->
+                     4:4, IHL:4, _:64, Proto, _Checksum:16,
+                     SA, SB, SC, SD, _Dst:32, Rest/binary>>) ->
     %% Ethernet + IPv4
+    SrcIP = list_to_binary(inet:ntoa({SA, SB, SC, SD})),
     OptionsLen = (IHL - 5) * 4,
     case Rest of
         <<_Options:OptionsLen/binary, TransportData/binary>> ->
-            extract_transport(Proto, TransportData);
+            case extract_transport(Proto, TransportData) of
+                {ok, Payload} -> {ok, SrcIP, Payload};
+                error -> error
+            end;
         _ ->
             error
     end;
@@ -60,14 +71,35 @@ extract_transport(6, <<_SrcPort:16, _DstPort:16, _Seq:32, _Ack:32, Offset:4, _:1
 extract_transport(_, _) ->
     error.
 
-%% Parse an HTTP request line, return {Method, Path} or error.
+%% Parse an NTRIP/HTTP request. Returns {ok, Method, Path, Auth} or error.
+%% Auth is 'none' or {basic, User, Pass}.
 parse_ntrip_request(Data) when is_binary(Data) ->
-    case binary:split(Data, <<"\r\n">>) of
-        [Line | _] ->
-            case binary:split(Line, <<" ">>, [global]) of
-                [Method, Path | _] -> {ok, Method, Path};
+    case binary:split(Data, <<"\r\n">>, [global]) of
+        [RequestLine | Headers] ->
+            case binary:split(RequestLine, <<" ">>, [global]) of
+                [Method, Path | _] ->
+                    Auth = find_auth_header(Headers),
+                    {ok, Method, Path, Auth};
                 _ -> error
             end;
         _ ->
             error
+    end.
+
+find_auth_header([]) -> none;
+find_auth_header([<<"Authorization: Basic ", Encoded/binary>> | _]) ->
+    decode_basic_creds(Encoded);
+find_auth_header([<<"Authorization:Basic ", Encoded/binary>> | _]) ->
+    decode_basic_creds(Encoded);
+find_auth_header([_ | Rest]) ->
+    find_auth_header(Rest).
+
+decode_basic_creds(Encoded) ->
+    try base64:decode(Encoded) of
+        Decoded ->
+            case binary:split(Decoded, <<":">>) of
+                [User, Pass] when byte_size(User) > 0 -> {basic, User, Pass};
+                _ -> none
+            end
+    catch _:_ -> none
     end.

@@ -1,0 +1,6 @@
+# NTRIP authentication credentials
+# Format: username:password (one per line)
+# Copy to users.conf to enable authentication.
+# If users.conf is absent, authentication is disabled.
+user1:password1
+user2:password2

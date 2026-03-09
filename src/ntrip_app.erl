@@ -13,7 +13,9 @@ main(_Args) ->
 start(_StartType, _StartArgs) ->
     io:format("TZSP-to-NTRIP bridge starting~n"),
     io:format("  TZSP receiver : UDP 37008~n"),
-    io:format("  NTRIP caster  : TCP 2101 (mount /RTCM3)~n"),
+    io:format("  NTRIP caster  : TCP 2101~n"),
+    io:format("  Mountpoints   : dynamic (from TZSP source IPs)~n"),
+    ntrip_auth:load_users(),
     io:format("~n"),
     ntrip_rtcm3:init_crc_table(),
     ntrip_sup:start_link().

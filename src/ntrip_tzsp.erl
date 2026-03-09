@@ -12,7 +12,7 @@ start_link() ->
 init([]) ->
     {ok, Socket} = gen_udp:open(?TZSP_PORT, [binary, {active, true}, {reuseaddr, true}]),
     io:format("[tzsp] listening on UDP port ~B~n", [?TZSP_PORT]),
-    {ok, #{socket => Socket, first_rtcm_logged => false}}.
+    {ok, #{socket => Socket, logged_sources => #{}}}.
 
 handle_call(_Request, _From, State) ->
     {reply, ok, State}.
@@ -30,14 +30,14 @@ process_packet(Data, IP, Port, State) ->
     case ntrip_protocol:strip_tzsp(Data) of
         {ok, Frame} ->
             case ntrip_protocol:extract_ip_payload(Frame) of
-                {ok, Payload} ->
+                {ok, SrcIP, Payload} ->
                     case ntrip_rtcm3:extract_frames(Payload) of
                         [] ->
                             State;
                         Frames ->
                             Validated = iolist_to_binary(Frames),
-                            State1 = maybe_log_first(IP, Port, byte_size(Validated), State),
-                            ntrip_clients:broadcast(Validated),
+                            State1 = maybe_log_first(SrcIP, IP, Port, byte_size(Validated), State),
+                            ntrip_clients:broadcast(SrcIP, Validated),
                             State1
                     end;
                 error ->
@@ -47,9 +47,11 @@ process_packet(Data, IP, Port, State) ->
             State
     end.
 
-maybe_log_first(_IP, _Port, _Size, #{first_rtcm_logged := true} = State) ->
+maybe_log_first(SrcIP, _IP, _Port, _Size, #{logged_sources := Logged} = State)
+  when is_map_key(SrcIP, Logged) ->
     State;
-maybe_log_first(IP, Port, Size, State) ->
-    io:format("[tzsp] receiving RTCM3 data from ~s:~B (~B bytes)~n",
-              [inet:ntoa(IP), Port, Size]),
-    State#{first_rtcm_logged := true}.
+maybe_log_first(SrcIP, IP, Port, Size, #{logged_sources := Logged} = State) ->
+    io:format("[tzsp] RTCM3 source ~s (via ~s:~B, ~B bytes) -> /~s~n",
+              [SrcIP, inet:ntoa(IP), Port, Size, SrcIP]),
+    ntrip_clients:notify_mountpoint(SrcIP),
+    State#{logged_sources := Logged#{SrcIP => true}}.
