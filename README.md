@@ -24,7 +24,8 @@ In the MikroTik terminal:
 
 ```routeros
 /tool sniffer set enabled=no
-/tool sniffer set streaming-enabled=yes \
+/tool sniffer set filter-ip-address=<base-station-ip>/32 \
+    streaming-enabled=yes \
     streaming-server=<bridge-machine-ip>:37008
 /tool sniffer set enabled=yes
 ```
@@ -34,9 +35,10 @@ Or in Winbox:
 1. Go to **Tools > Packet Sniffer**
 2. On the **General** tab, check **Streaming Enabled**
 3. On the **Streaming** tab, set **Server** to the IP of the machine running this bridge (port 37008)
-4. Click **Apply**, then **Start**
+4. On the **Filter** tab, set **IP Address** to your base station's IP
+5. Click **Apply**, then **Start**
 
-The bridge validates every RTCM3 frame (preamble, reserved bits, and CRC-24Q checksum), so non-RTCM3 traffic captured by the sniffer is silently discarded. You can add filters on the MikroTik side to reduce unnecessary traffic, but it's not required.
+The IP filter ensures only traffic from the base station is mirrored. The bridge also validates every RTCM3 frame (preamble, reserved bits, and CRC-24Q checksum), so any non-RTCM3 packets are silently discarded.
 
 ### 2. Verify
 
