@@ -1,0 +1,195 @@
+#!/usr/bin/env python3
+"""TZSP-to-NTRIP bridge: receives TZSP-encapsulated RTCM3 from a MikroTik
+packet sniffer and re-serves it as an NTRIP v1 caster."""
+
+import socket
+import struct
+import threading
+import time
+
+TZSP_PORT = 37008
+NTRIP_PORT = 2101
+MOUNT_POINT = "RTCM3"
+
+# Connected NTRIP clients — each entry is a socket
+clients = []
+clients_lock = threading.Lock()
+
+# Flag to log only the first RTCM3 packet received
+first_rtcm_logged = False
+
+
+def broadcast(data):
+    """Send data to all connected NTRIP clients, removing dead ones."""
+    with clients_lock:
+        dead = []
+        for sock in clients:
+            try:
+                sock.sendall(data)
+            except (BrokenPipeError, ConnectionResetError, OSError):
+                dead.append(sock)
+        for sock in dead:
+            clients.remove(sock)
+            addr = "unknown"
+            try:
+                addr = sock.getpeername()
+            except Exception:
+                pass
+            print(f"[ntrip] client disconnected: {addr}")
+            try:
+                sock.close()
+            except Exception:
+                pass
+
+
+def strip_tzsp(data):
+    """Strip the TZSP header and return the encapsulated frame, or None."""
+    if len(data) < 4:
+        return None
+    # version, type, encapsulated protocol
+    _ver, _typ, _proto = struct.unpack("!BBH", data[:4])
+    pos = 4
+    # Walk tagged fields until end tag (0x01) or padding (0x00)
+    while pos < len(data):
+        tag_type = data[pos]
+        if tag_type == 0x01:  # end tag — no length/value
+            pos += 1
+            break
+        if tag_type == 0x00:  # padding
+            pos += 1
+            continue
+        if pos + 1 >= len(data):
+            return None
+        tag_len = data[pos + 1]
+        pos += 2 + tag_len
+    return data[pos:] if pos < len(data) else None
+
+
+def extract_udp_payload(frame):
+    """Given an Ethernet or raw-IP frame, return the UDP payload or None."""
+    if not frame:
+        return None
+
+    # Detect raw IP vs Ethernet: check IP version nibble
+    first_nibble = (frame[0] >> 4) & 0xF
+    if first_nibble == 4:
+        ip_offset = 0  # raw IP
+    else:
+        ip_offset = 14  # Ethernet header
+
+    if len(frame) < ip_offset + 20:
+        return None
+
+    ip_header = frame[ip_offset:]
+    version_ihl = ip_header[0]
+    if ((version_ihl >> 4) & 0xF) != 4:
+        return None
+    ihl = (version_ihl & 0xF) * 4
+    protocol = ip_header[9]
+    if protocol != 17:  # not UDP
+        return None
+
+    udp_offset = ip_offset + ihl
+    if len(frame) < udp_offset + 8:
+        return None
+
+    return frame[udp_offset + 8:]
+
+
+def tzsp_receiver():
+    """Listen for TZSP packets and broadcast RTCM3 data to NTRIP clients."""
+    global first_rtcm_logged
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    sock.bind(("0.0.0.0", TZSP_PORT))
+    print(f"[tzsp] listening on UDP port {TZSP_PORT}")
+
+    while True:
+        data, addr = sock.recvfrom(65535)
+        frame = strip_tzsp(data)
+        if frame is None:
+            continue
+        payload = extract_udp_payload(frame)
+        if payload is None or len(payload) == 0:
+            continue
+        # Validate RTCM3 preamble
+        if payload[0] != 0xD3:
+            continue
+        if not first_rtcm_logged:
+            first_rtcm_logged = True
+            print(f"[tzsp] receiving RTCM3 data from {addr} ({len(payload)} bytes)")
+        broadcast(payload)
+
+
+SOURCETABLE = (
+    "SOURCETABLE 200 OK\r\n"
+    "Content-Type: text/plain\r\n"
+    "\r\n"
+    f"STR;{MOUNT_POINT};{MOUNT_POINT};RTCM 3.3;;;;;0.00;0.00;0;0;;none;N;N;;\r\n"
+    "ENDSOURCETABLE\r\n"
+)
+
+
+def handle_ntrip_client(conn, addr):
+    """Handle a single NTRIP client connection."""
+    try:
+        request = conn.recv(4096).decode("ascii", errors="replace")
+    except Exception:
+        conn.close()
+        return
+
+    lines = request.split("\r\n")
+    if not lines:
+        conn.close()
+        return
+
+    parts = lines[0].split()
+    if len(parts) < 2:
+        conn.close()
+        return
+
+    method, path = parts[0], parts[1]
+
+    if method != "GET":
+        conn.sendall(b"HTTP/1.0 405 Method Not Allowed\r\n\r\n")
+        conn.close()
+        return
+
+    if path == "/":
+        # Sourcetable request
+        conn.sendall(SOURCETABLE.encode())
+        conn.close()
+        return
+
+    if path == f"/{MOUNT_POINT}":
+        print(f"[ntrip] client connected: {addr}")
+        conn.sendall(b"ICY 200 OK\r\n\r\n")
+        with clients_lock:
+            clients.append(conn)
+        return  # socket stays open — broadcast() will write to it
+
+    conn.sendall(b"HTTP/1.0 404 Not Found\r\n\r\n")
+    conn.close()
+
+
+def ntrip_caster():
+    """Accept NTRIP client connections."""
+    srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    srv.bind(("0.0.0.0", NTRIP_PORT))
+    srv.listen(5)
+    print(f"[ntrip] listening on TCP port {NTRIP_PORT}")
+
+    while True:
+        conn, addr = srv.accept()
+        threading.Thread(target=handle_ntrip_client, args=(conn, addr), daemon=True).start()
+
+
+if __name__ == "__main__":
+    print(f"TZSP-to-NTRIP bridge starting")
+    print(f"  TZSP receiver : UDP {TZSP_PORT}")
+    print(f"  NTRIP caster  : TCP {NTRIP_PORT} (mount /{MOUNT_POINT})")
+    print()
+
+    threading.Thread(target=tzsp_receiver, daemon=True).start()
+    ntrip_caster()
