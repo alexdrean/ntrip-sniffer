@@ -18,18 +18,13 @@ The bridge listens on:
 
 The packet sniffer captures RTCM3 traffic passing through the router and mirrors it via TZSP to the machine running this bridge.
 
-### 1. Identify the RTCM3 traffic
-
-Determine the IP and port of your base station's RTCM3 stream. For example, if your base station sends corrections from `192.168.1.10` on UDP port `9999`.
-
-### 2. Configure the packet sniffer
+### 1. Configure the packet sniffer
 
 In the MikroTik terminal:
 
 ```routeros
 /tool sniffer set enabled=no
-/tool sniffer set filter-port=9999 filter-ip-address=192.168.1.10/32 \
-    filter-ip-protocol=udp streaming-enabled=yes \
+/tool sniffer set streaming-enabled=yes \
     streaming-server=<bridge-machine-ip>:37008
 /tool sniffer set enabled=yes
 ```
@@ -39,10 +34,11 @@ Or in Winbox:
 1. Go to **Tools > Packet Sniffer**
 2. On the **General** tab, check **Streaming Enabled**
 3. On the **Streaming** tab, set **Server** to the IP of the machine running this bridge (port 37008)
-4. On the **Filter** tab, set the filter to match your RTCM3 traffic (source IP, port, protocol)
-5. Click **Apply**, then **Start**
+4. Click **Apply**, then **Start**
 
-### 3. Verify
+The bridge validates every RTCM3 frame (preamble, reserved bits, and CRC-24Q checksum), so non-RTCM3 traffic captured by the sniffer is silently discarded. You can add filters on the MikroTik side to reduce unnecessary traffic, but it's not required.
+
+### 2. Verify
 
 You should see log output from the bridge when RTCM3 data starts flowing:
 
@@ -78,8 +74,31 @@ Base Station ──RTCM3──▶ MikroTik Router ──TZSP──▶ ntrip_brid
 ```
 
 1. The MikroTik packet sniffer captures RTCM3 packets matching the filter and wraps them in TZSP (TaZmen Sniffer Protocol), sending them over UDP to the bridge.
-2. The bridge strips the TZSP encapsulation, extracts the UDP payload from the inner Ethernet/IP frame, validates the RTCM3 preamble (`0xD3`), and broadcasts the raw bytes to all connected NTRIP clients.
+2. The bridge strips the TZSP encapsulation, extracts the UDP payload from the inner Ethernet/IP frame, validates each RTCM3 frame (preamble, reserved bits, CRC-24Q), and broadcasts the raw bytes to all connected NTRIP clients.
 3. Rovers connect via standard NTRIP v1 and receive the corrections as a continuous stream.
+
+## Running with pm2
+
+To keep the bridge running in the background and auto-restart on boot:
+
+```bash
+pm2 start ntrip_bridge.py --name ntrip-bridge --interpreter python3
+pm2 save
+pm2 startup
+```
+
+View logs:
+
+```bash
+pm2 logs ntrip-bridge
+```
+
+Restart or stop:
+
+```bash
+pm2 restart ntrip-bridge
+pm2 stop ntrip-bridge
+```
 
 ## Notes
 
