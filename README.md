@@ -2,18 +2,18 @@
 
 Captures RTCM3 correction data from a MikroTik router's packet sniffer (via TZSP) and re-serves it as an NTRIP v1 caster. Useful when you have a base station sending corrections through a MikroTik network and want to feed rovers without a dedicated NTRIP caster.
 
-Written in Erlang/OTP. Binary pattern matching handles protocol parsing cleanly, and OTP supervision provides self-healing reliability for unattended deployment.
+Written in Go. Compiles to a single static binary with no runtime dependencies.
 
 ## Quick Start
 
 ```bash
-make
+go build -o ntrip_bridge .
 ./ntrip_bridge
 ```
 
 The bridge listens on:
 - **UDP 37008** — TZSP packets from the MikroTik
-- **TCP 2101** — NTRIP caster for rover connections (mount point `/RTCM3`)
+- **TCP 2101** — NTRIP caster for rover connections
 
 ## MikroTik Setup
 
@@ -42,12 +42,17 @@ You should see log output when RTCM3 data starts flowing:
 ```
 TZSP-to-NTRIP bridge starting
   TZSP receiver : UDP 37008
-  NTRIP caster  : TCP 2101 (mount /RTCM3)
+  NTRIP caster  : TCP 2101
+  Mountpoints   : dynamic (from TZSP source IPs)
 
 [tzsp] listening on UDP port 37008
 [ntrip] listening on TCP port 2101
-[tzsp] receiving RTCM3 data from 192.168.1.1:37008 (245 bytes)
+[tzsp] RTCM3 source 192.168.1.1 (via 10.0.0.1:37008, 245 bytes) -> /192.168.1.1
 ```
+
+## Authentication
+
+Copy `users.conf.example` to `users.conf` to enable HTTP Basic authentication. Format: `username:password`, one per line. If `users.conf` is absent, all connections are accepted.
 
 ## Rover Configuration
 
@@ -57,11 +62,7 @@ Point your rover's NTRIP client at:
 |-------------|---------------------------------------|
 | Host        | IP of the machine running this bridge |
 | Port        | `2101`                                |
-| Mount point | `RTCM3`                               |
-| Username    | (any or blank)                        |
-| Password    | (any or blank)                        |
-
-No authentication is required. The bridge accepts any credentials.
+| Mount point | (from sourcetable, e.g. `192.168.1.1`)|
 
 ## How It Works
 
@@ -74,26 +75,26 @@ Base Station ──RTCM3──> MikroTik Router ──TZSP──> ntrip_bridge �
 2. The bridge strips the TZSP encapsulation, extracts the transport payload from the inner IP frame, validates each RTCM3 frame (preamble, reserved bits, CRC-24Q), and broadcasts to all connected NTRIP clients.
 3. Rovers connect via standard NTRIP v1 and receive corrections as a continuous stream.
 
-## Deployment on Raspberry Pi
+## Deployment
 
-The built escript is portable — copy it to the Pi.
+The built binary is statically linked and portable — copy it to any Linux machine (including Raspberry Pi with `GOARCH=arm`).
 
-### Install Erlang
+### Cross-compile for Raspberry Pi
 
 ```bash
-sudo apt-get install erlang-base
+GOOS=linux GOARCH=arm GOARM=7 go build -o ntrip_bridge .
 ```
 
-### Run with pm2 (recommended)
+### Run with pm2
 
 ```bash
-pm2 start ./ntrip_bridge --name ntrip-bridge --interpreter escript
+pm2 start ./ntrip_bridge --name ntrip-bridge
 pm2 save && pm2 startup
 ```
 
 View logs: `pm2 logs ntrip-bridge`
 
-### Run with systemd (alternative)
+### Run with systemd
 
 Create `/etc/systemd/system/ntrip-bridge.service`:
 
@@ -103,7 +104,7 @@ Description=TZSP-to-NTRIP Bridge
 After=network.target
 
 [Service]
-ExecStart=/usr/bin/escript /opt/ntrip_bridge/ntrip_bridge
+ExecStart=/opt/ntrip_bridge/ntrip_bridge
 Restart=always
 
 [Install]
@@ -116,17 +117,16 @@ sudo systemctl enable --now ntrip-bridge
 
 ## Building from Source
 
-Requires Erlang (`erlang-base` package):
+Requires Go 1.21+:
 
 ```bash
-make
-# Output: ./ntrip_bridge (portable escript)
+go build -o ntrip_bridge .
 ```
 
 ## Notes
 
 - Multiple rovers can connect simultaneously.
+- Mountpoints are created dynamically from RTCM3 source IPs.
 - The bridge validates RTCM3 frames (preamble, reserved bits, CRC-24Q) but does not parse message internals.
 - Both Ethernet-framed and raw-IP TZSP captures are handled automatically.
 - Both UDP and TCP inner payloads are supported.
-- No authentication, no configuration files. Stop with Ctrl+C.
