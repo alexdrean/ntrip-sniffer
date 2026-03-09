@@ -47,10 +47,13 @@ process_packet(Data, IP, Port, State) ->
             State
     end.
 
-maybe_log_first(SrcIP, _IP, _Port, _Size, #{logged_sources := Logged} = State)
-  when is_map_key(SrcIP, Logged) ->
-    State;
 maybe_log_first(SrcIP, IP, Port, Size, #{logged_sources := Logged} = State) ->
+    case maps:is_key(SrcIP, Logged) of
+        true -> State;
+        false -> log_new_source(SrcIP, IP, Port, Size, Logged, State)
+    end.
+
+log_new_source(SrcIP, IP, Port, Size, Logged, State) ->
     io:format("[tzsp] RTCM3 source ~s (via ~s:~B, ~B bytes) -> /~s~n",
               [SrcIP, inet:ntoa(IP), Port, Size, SrcIP]),
     ntrip_clients:notify_mountpoint(SrcIP),

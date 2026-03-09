@@ -35,12 +35,12 @@ handle_cast({register, Pid, Socket, Addr, Mountpoint}, #{clients := Clients} = S
     {noreply, State#{clients := Clients#{Pid => {Socket, Addr, Mountpoint}}}};
 handle_cast({broadcast, Mountpoint, Data}, #{clients := Clients} = State) ->
     Msg = {rtcm3, Data},
-    maps:foreach(fun(Pid, {_, _, MP}) ->
+    maps:fold(fun(Pid, {_, _, MP}, _) ->
         case MP of
             Mountpoint -> Pid ! Msg;
             _ -> ok
         end
-    end, Clients),
+    end, ok, Clients),
     {noreply, State};
 handle_cast({mountpoint, MP}, #{mountpoints := MPs} = State) ->
     {noreply, State#{mountpoints := MPs#{MP => true}}};
