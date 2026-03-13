@@ -18,7 +18,8 @@ func main() {
 	fmt.Println()
 
 	clients := newClientRegistry()
-	go startTZSP(clients)
+	asm := newStreamAssembler()
+	go startTZSP(clients, asm)
 	go startCaster(clients)
 
 	sig := make(chan os.Signal, 1)

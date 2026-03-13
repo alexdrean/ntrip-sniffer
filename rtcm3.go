@@ -27,7 +27,9 @@ func crc24q(data []byte) uint32 {
 }
 
 // extractFrames extracts and validates RTCM3 frames from a payload.
-func extractFrames(payload []byte) []byte {
+// Returns validated frame bytes and any remaining unprocessed bytes
+// (partial frame at the end that needs more data).
+func extractFrames(payload []byte) ([]byte, []byte) {
 	var result []byte
 	for len(payload) > 0 {
 		// Scan for preamble
@@ -36,7 +38,7 @@ func extractFrames(payload []byte) []byte {
 			continue
 		}
 		if len(payload) < 3 {
-			break
+			return result, payload
 		}
 		// Check reserved bits are zero (upper 6 bits of second byte)
 		if payload[1]&0xFC != 0 {
@@ -46,7 +48,7 @@ func extractFrames(payload []byte) []byte {
 		length := int(payload[1]&0x03)<<8 | int(payload[2])
 		totalLen := 3 + length + 3 // header + body + CRC
 		if len(payload) < totalLen {
-			break
+			return result, payload
 		}
 		body := payload[3 : 3+length]
 		crcBytes := payload[3+length : totalLen]
@@ -62,5 +64,5 @@ func extractFrames(payload []byte) []byte {
 			payload = payload[1:]
 		}
 	}
-	return result
+	return result, nil
 }

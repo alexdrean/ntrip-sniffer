@@ -8,7 +8,7 @@ import (
 
 const tzspPort = 37008
 
-func startTZSP(clients *clientRegistry) {
+func startTZSP(clients *clientRegistry, asm *streamAssembler) {
 	addr := net.UDPAddr{Port: tzspPort}
 	conn, err := net.ListenUDP("udp", &addr)
 	if err != nil {
@@ -27,21 +27,18 @@ func startTZSP(clients *clientRegistry) {
 		if err != nil {
 			continue
 		}
-		processPacket(buf[:n], remote, clients, &loggedMu, logged)
+		processPacket(buf[:n], remote, clients, asm, &loggedMu, logged)
 	}
 }
 
-func processPacket(data []byte, remote *net.UDPAddr, clients *clientRegistry, loggedMu *sync.Mutex, logged map[string]bool) {
+func processPacket(data []byte, remote *net.UDPAddr, clients *clientRegistry, asm *streamAssembler, loggedMu *sync.Mutex, logged map[string]bool) {
 	frame, ok := stripTZSP(data)
 	if !ok {
 		return
 	}
-	srcIP, payload, ok := extractIPPayload(frame)
+
+	srcIP, validated, ok := asm.process(frame)
 	if !ok {
-		return
-	}
-	validated := extractFrames(payload)
-	if len(validated) == 0 {
 		return
 	}
 

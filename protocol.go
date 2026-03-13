@@ -37,62 +37,53 @@ func walkTags(data []byte) ([]byte, bool) {
 	return nil, false
 }
 
-// extractIPPayload extracts the source IP string and transport payload from
-// an Ethernet or raw-IP frame.
-func extractIPPayload(frame []byte) (srcIP string, payload []byte, ok bool) {
-	// Try raw IPv4 first
+// extractIPPayloadEx extracts source IP, IP protocol, TCP sequence number,
+// and transport payload from an Ethernet or raw-IP frame.
+func extractIPPayloadEx(frame []byte) (srcIP string, proto byte, tcpSeq uint32, payload []byte, ok bool) {
 	if len(frame) >= 20 && (frame[0]>>4) == 4 {
-		return extractFromIPv4(frame)
+		return extractFromIPv4Ex(frame)
 	}
-	// Try Ethernet + IPv4
 	if len(frame) >= 34 && (frame[14]>>4) == 4 {
-		return extractFromIPv4(frame[14:])
+		return extractFromIPv4Ex(frame[14:])
 	}
-	return "", nil, false
+	return "", 0, 0, nil, false
 }
 
-func extractFromIPv4(ip []byte) (string, []byte, bool) {
+func extractFromIPv4Ex(ip []byte) (string, byte, uint32, []byte, bool) {
 	if len(ip) < 20 {
-		return "", nil, false
+		return "", 0, 0, nil, false
 	}
 	ihl := int(ip[0] & 0x0F)
 	headerLen := ihl * 4
 	if len(ip) < headerLen {
-		return "", nil, false
+		return "", 0, 0, nil, false
 	}
 	proto := ip[9]
 	srcIP := fmt.Sprintf("%d.%d.%d.%d", ip[12], ip[13], ip[14], ip[15])
 	transportData := ip[headerLen:]
 
-	payload, ok := extractTransport(proto, transportData)
-	if !ok {
-		return "", nil, false
-	}
-	return srcIP, payload, true
-}
-
-func extractTransport(proto byte, data []byte) ([]byte, bool) {
 	switch proto {
 	case 17: // UDP
-		if len(data) < 8 {
-			return nil, false
+		if len(transportData) < 8 {
+			return "", 0, 0, nil, false
 		}
-		return data[8:], true
+		return srcIP, proto, 0, transportData[8:], true
 	case 6: // TCP
-		if len(data) < 20 {
-			return nil, false
+		if len(transportData) < 20 {
+			return "", 0, 0, nil, false
 		}
-		offset := int(data[12]>>4) * 4
-		if len(data) < offset {
-			return nil, false
+		seq := binary.BigEndian.Uint32(transportData[4:8])
+		offset := int(transportData[12]>>4) * 4
+		if len(transportData) < offset {
+			return "", 0, 0, nil, false
 		}
-		payload := data[offset:]
+		payload := transportData[offset:]
 		if len(payload) == 0 {
-			return nil, false
+			return "", 0, 0, nil, false
 		}
-		return payload, true
+		return srcIP, proto, seq, payload, true
 	default:
-		return nil, false
+		return "", 0, 0, nil, false
 	}
 }
 
